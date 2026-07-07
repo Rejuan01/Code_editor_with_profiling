@@ -1,2 +1,12 @@
+# Python cache files
 __pycache__/
+*.pyc
+
+# Virtual environment folder
 venv/
+
+# Local workspace configurations
+.vscode/
+
+# fonts
+fonts/

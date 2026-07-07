@@ -3,10 +3,11 @@ import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, 
                              QAction, QSplitter, QTreeView, QFileSystemModel, 
                              QFileDialog, QMessageBox, QPushButton, QStackedWidget, QLabel)
-from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QDir
-from PyQt5.Qsci import QsciScintilla
+from PyQt5.QtGui import QFontDatabase, QFont
+from editor import CppEditor
 from terminal import TerminalWidget
+
 class CodeEditor(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -79,8 +80,8 @@ class CodeEditor(QMainWindow):
         
         self.sidebar_stack.hide()
         
-        # QScintilla editor
-        self.editor = QsciScintilla()
+        # Editor part
+        self.editor = CppEditor()
         
         # Right Side Layout Splitter (Editor on top, Terminal on bottom)
         self.right_splitter = QSplitter(Qt.Vertical)
@@ -97,29 +98,6 @@ class CodeEditor(QMainWindow):
         self.splitter.addWidget(self.sidebar_stack)
         self.splitter.addWidget(self.right_splitter)
         self.splitter.setSizes([250, 774]) # Default sizes
-        
-        # Basic font configuration
-        font = self.editor.font()
-        font.setFamily("Courier New")
-        font.setPointSize(12)
-        self.editor.setFont(font)
-        
-        # Editor Dark Theme Settings
-        self.editor.setPaper(QColor("#1e1e1e"))
-        self.editor.setColor(QColor("#d4d4d4"))
-        self.editor.setCaretForegroundColor(QColor("#ffffff"))
-        self.editor.setCaretLineVisible(True)
-        self.editor.setCaretLineBackgroundColor(QColor("#2d2d30"))
-        self.editor.setFoldMarginColors(QColor("#1e1e1e"), QColor("#1e1e1e"))
-        
-        # Line numbers
-        self.editor.setMarginLineNumbers(0, True)
-        self.editor.setMarginWidth(0, "0000")
-        self.editor.setMarginsBackgroundColor(QColor("#1e1e1e"))
-        self.editor.setMarginsForegroundColor(QColor("#858585"))
-        
-        # No border
-        self.editor.setFrameShape(QsciScintilla.NoFrame)
 
     def setup_menu(self):
         menubar = self.menuBar()
@@ -245,6 +223,12 @@ class CodeEditor(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # Load Fira Code Font
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    font_path = os.path.join(project_root, "fonts", "FiraCode-Regular.ttf")
+    QFontDatabase.addApplicationFont(font_path)
+    
     # Set app style to Fusion for better dark theme compatibility across OS
     app.setStyle("Fusion")
     window = CodeEditor()
