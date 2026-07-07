@@ -14,7 +14,6 @@ class TerminalWidget(QTextEdit):
                 font-family: 'Courier New';
                 font-size: 11pt;
                 border: none;
-                border-top: 1px solid #454545;
             }
         """)
         
@@ -79,6 +78,7 @@ class TerminalWidget(QTextEdit):
             
             # Reset selection and move to end
             cursor.clearSelection()
+            cursor.movePosition(QTextCursor.End)
             self.setTextCursor(cursor)
             self.insertPlainText("\n")
             

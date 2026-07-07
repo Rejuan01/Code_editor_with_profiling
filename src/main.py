@@ -2,7 +2,7 @@ import sys
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, 
                              QAction, QSplitter, QTreeView, QFileSystemModel, 
-                             QFileDialog, QMessageBox, QPushButton, QStackedWidget, QLabel)
+                             QFileDialog, QMessageBox, QPushButton, QStackedWidget, QLabel, QTabWidget)
 from PyQt5.QtCore import Qt, QDir
 from PyQt5.QtGui import QFontDatabase, QFont
 from editor import CppEditor
@@ -47,6 +47,7 @@ class CodeEditor(QMainWindow):
         
         # Splitter for sidebar and editor
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setHandleWidth(1)
         main_layout.addWidget(self.splitter)
         
         # File System Model
@@ -68,34 +69,105 @@ class CodeEditor(QMainWindow):
         # Double click to open file
         self.tree_view.doubleClicked.connect(self.on_tree_double_clicked)
         
-        # Sidebar Stack
+        # Explorer Container
+        self.explorer_container = QWidget()
+        self.explorer_container.setObjectName("ExplorerContainer")
+        explorer_layout = QVBoxLayout(self.explorer_container)
+        explorer_layout.setContentsMargins(0, 0, 0, 0)
+        explorer_layout.setSpacing(0)
+        
+        # Explorer Title
+        self.explorer_title = QLabel("EXPLORER")
+        self.explorer_title.setObjectName("ExplorerTitle")
+        explorer_layout.addWidget(self.explorer_title)
+        
+        # Folder Header
+        self.folder_header = QPushButton("NO FOLDER OPENED")
+        self.folder_header.setObjectName("FolderHeader")
+        self.folder_header.setCursor(Qt.PointingHandCursor)
+        self.folder_header.clicked.connect(self.open_folder)
+        explorer_layout.addWidget(self.folder_header)
+        
+        # Sidebar Stack for tree or empty state
         self.sidebar_stack = QStackedWidget()
         
-        self.no_folder_label = QLabel("No folder is selected")
-        self.no_folder_label.setAlignment(Qt.AlignCenter)
-        self.no_folder_label.setStyleSheet("color: #858585;")
+        # Empty State
+        self.empty_state = QWidget()
+        empty_layout = QVBoxLayout(self.empty_state)
+        empty_layout.setAlignment(Qt.AlignTop)
+        empty_layout.setContentsMargins(20, 10, 20, 20)
         
-        self.sidebar_stack.addWidget(self.no_folder_label)
+        no_folder_label = QLabel("You have not yet opened a folder.")
+        no_folder_label.setWordWrap(True)
+        no_folder_label.setStyleSheet("color: #cccccc;")
+        
+        open_folder_btn = QPushButton("Open Folder")
+        open_folder_btn.setObjectName("OpenFolderBtn")
+        open_folder_btn.setCursor(Qt.PointingHandCursor)
+        open_folder_btn.clicked.connect(self.open_folder)
+        
+        empty_layout.addWidget(no_folder_label)
+        empty_layout.addWidget(open_folder_btn)
+        
+        self.sidebar_stack.addWidget(self.empty_state)
         self.sidebar_stack.addWidget(self.tree_view)
         
-        self.sidebar_stack.hide()
+        explorer_layout.addWidget(self.sidebar_stack)
         
-        # Editor part
-        self.editor = CppEditor()
+        self.explorer_container.hide()
+        
+        # Editor part (Tabs)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
         
         # Right Side Layout Splitter (Editor on top, Terminal on bottom)
         self.right_splitter = QSplitter(Qt.Vertical)
+        self.right_splitter.setHandleWidth(1)
+        
+        # Terminal Container
+        self.terminal_container = QWidget()
+        self.terminal_container.setObjectName("TerminalContainer")
+        self.terminal_container.setMinimumHeight(100) # Prevents terminal from being squeezed too small
+        term_layout = QVBoxLayout(self.terminal_container)
+        term_layout.setContentsMargins(0, 0, 0, 0)
+        term_layout.setSpacing(0)
+        
+        # Terminal Header
+        self.terminal_header = QWidget()
+        self.terminal_header.setObjectName("TerminalHeader")
+        self.terminal_header.setFixedHeight(30)
+        term_header_layout = QHBoxLayout(self.terminal_header)
+        term_header_layout.setContentsMargins(15, 0, 10, 0)
+        
+        term_title = QLabel("TERMINAL")
+        term_title.setStyleSheet("color: #bbbbbb; font-size: 11px; font-weight: normal;")
+        
+        close_term_btn = QPushButton("✕")
+        close_term_btn.setObjectName("CloseTerminalBtn")
+        close_term_btn.setFixedSize(20, 20)
+        close_term_btn.setCursor(Qt.PointingHandCursor)
+        close_term_btn.setToolTip("Close Terminal")
+        close_term_btn.clicked.connect(self.hide_terminal)
+        
+        term_header_layout.addWidget(term_title)
+        term_header_layout.addStretch()
+        term_header_layout.addWidget(close_term_btn)
         
         # Terminal Widget
         self.terminal = TerminalWidget()
         
-        self.right_splitter.addWidget(self.editor)
-        self.right_splitter.addWidget(self.terminal)
+        term_layout.addWidget(self.terminal_header)
+        term_layout.addWidget(self.terminal)
+        
+        self.right_splitter.addWidget(self.tabs)
+        self.right_splitter.addWidget(self.terminal_container)
         self.right_splitter.setSizes([600, 168])
-        self.terminal.hide()
+        self.terminal_container.hide()
         
         # Add to splitter
-        self.splitter.addWidget(self.sidebar_stack)
+        self.splitter.addWidget(self.explorer_container)
         self.splitter.addWidget(self.right_splitter)
         self.splitter.setSizes([250, 774]) # Default sizes
 
@@ -105,10 +177,18 @@ class CodeEditor(QMainWindow):
         # File Menu
         file_menu = menubar.addMenu("File")
         new_action = QAction("New", self)
+        new_action.setShortcut("Ctrl+N")
+        
         open_action = QAction("Open Folder...", self)
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self.open_folder)
+        
         save_action = QAction("Save", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self.save_file)
+        
         exit_action = QAction("Exit", self)
+        exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         
         file_menu.addAction(new_action)
@@ -119,15 +199,22 @@ class CodeEditor(QMainWindow):
         
         # Run Menu
         run_menu = menubar.addMenu("Run")
-        run_action = QAction("Run Code", self)
-        build_action = QAction("Build", self)
         
-        run_menu.addAction(run_action)
+        build_action = QAction("Build", self)
+        build_action.setShortcut("Ctrl+B")
+        build_action.triggered.connect(self.build_code)
+        
+        run_action = QAction("Run Code", self)
+        run_action.setShortcut("Ctrl+R")
+        run_action.triggered.connect(self.run_code)
+        
         run_menu.addAction(build_action)
+        run_menu.addAction(run_action)
         
         # Terminal Menu
         terminal_menu = menubar.addMenu("Terminal")
-        new_terminal_action = QAction("New Terminal", self)
+        new_terminal_action = QAction("Toggle Terminal", self)
+        new_terminal_action.setShortcut("Ctrl+`")
         new_terminal_action.triggered.connect(self.toggle_terminal)
         
         terminal_menu.addAction(new_terminal_action)
@@ -135,34 +222,125 @@ class CodeEditor(QMainWindow):
     def open_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Open Folder")
         if folder_path:
+            folder_name = os.path.basename(os.path.normpath(folder_path))
+            self.folder_header.setText(f"⌄ {folder_name.upper()}")
             self.model.setRootPath(folder_path)
             self.tree_view.setRootIndex(self.model.index(folder_path))
             self.sidebar_stack.setCurrentWidget(self.tree_view)
-            self.sidebar_stack.show()
+            self.explorer_container.show()
             self.terminal.set_directory(folder_path)
 
     def toggle_explorer(self):
-        if self.sidebar_stack.isHidden():
-            self.sidebar_stack.show()
+        if self.explorer_container.isHidden():
+            self.explorer_container.show()
         else:
-            self.sidebar_stack.hide()
+            self.explorer_container.hide()
 
     def on_tree_double_clicked(self, index):
         file_path = self.model.filePath(index)
         if not self.model.isDir(index):
+            # Check if file is already open
+            for i in range(self.tabs.count()):
+                editor = self.tabs.widget(i)
+                if hasattr(editor, 'file_path') and editor.file_path == file_path:
+                    self.tabs.setCurrentIndex(i)
+                    return
+                    
+            # Open new file
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                self.editor.setText(content)
+                
+                new_editor = CppEditor()
+                new_editor.setText(content)
+                new_editor.file_path = file_path
+                
+                file_name = os.path.basename(file_path)
+                tab_index = self.tabs.addTab(new_editor, file_name)
+                self.tabs.setCurrentIndex(tab_index)
+                self.tabs.setTabToolTip(tab_index, file_path)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not open file:\n{str(e)}")
 
+    def close_tab(self, index):
+        widget = self.tabs.widget(index)
+        self.tabs.removeTab(index)
+        if widget:
+            widget.deleteLater()
+
+    def save_file(self):
+        current_tab_index = self.tabs.currentIndex()
+        if current_tab_index != -1:
+            editor = self.tabs.widget(current_tab_index)
+            if hasattr(editor, 'file_path'):
+                try:
+                    with open(editor.file_path, 'w', encoding='utf-8') as f:
+                        f.write(editor.text())
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not save file:\n{str(e)}")
+
+    def get_current_file_path(self):
+        current_tab_index = self.tabs.currentIndex()
+        if current_tab_index != -1:
+            editor = self.tabs.widget(current_tab_index)
+            if hasattr(editor, 'file_path'):
+                return editor.file_path
+        return None
+
+    def build_code(self):
+        file_path = self.get_current_file_path()
+        if not file_path:
+            QMessageBox.warning(self, "Warning", "No file is currently open to build.")
+            return
+            
+        file_dir = os.path.dirname(file_path)
+        file_name = os.path.basename(file_path)
+        file_name_no_ext, ext = os.path.splitext(file_name)
+        
+        if ext not in ['.cpp', '.c', '.cxx', '.cc']:
+            QMessageBox.warning(self, "Warning", "Current file is not a C/C++ source file.")
+            return
+            
+        out_file = os.path.join(file_dir, file_name_no_ext)
+        cmd = f'g++ "{file_path}" -o "{out_file}"'
+        
+        if self.terminal_container.isHidden():
+            self.terminal_container.show()
+            self.terminal.setFocus()
+        self.terminal.set_directory(file_dir)
+        self.terminal.execute_command(cmd)
+
+    def run_code(self):
+        file_path = self.get_current_file_path()
+        if not file_path:
+            QMessageBox.warning(self, "Warning", "No file is currently open to run.")
+            return
+            
+        file_dir = os.path.dirname(file_path)
+        file_name_no_ext = os.path.splitext(os.path.basename(file_path))[0]
+        out_file = os.path.join(file_dir, file_name_no_ext)
+        
+        if not os.path.exists(out_file):
+            QMessageBox.warning(self, "Warning", "Executable not found. Please build the code first.")
+            return
+            
+        cmd = f'./"{os.path.basename(out_file)}"'
+        
+        if self.terminal_container.isHidden():
+            self.terminal_container.show()
+            self.terminal.setFocus()
+        self.terminal.set_directory(file_dir)
+        self.terminal.execute_command(cmd)
+
+    def hide_terminal(self):
+        self.terminal_container.hide()
+
     def toggle_terminal(self):
-        if self.terminal.isHidden():
-            self.terminal.show()
+        if self.terminal_container.isHidden():
+            self.terminal_container.show()
             self.terminal.setFocus()
         else:
-            self.terminal.hide()
+            self.terminal_container.hide()
 
     def apply_dark_theme(self):
         # App-wide dark theme stylesheet (VS Code inspired)
@@ -200,11 +378,64 @@ class CodeEditor(QMainWindow):
                 color: #cccccc;
                 border: none;
             }
+            QTreeView::item {
+                padding: 4px;
+            }
+            QTreeView::item:hover {
+                background-color: #2a2d2e;
+            }
             QTreeView::item:selected {
                 background-color: #37373d;
+                color: #ffffff;
+            }
+            #ExplorerContainer {
+                background-color: #252526;
+            }
+            #ExplorerTitle {
+                color: #bbbbbb;
+                font-size: 11px;
+                padding: 10px 20px;
+                background-color: #252526;
+            }
+            #FolderHeader {
+                text-align: left;
+                padding: 5px 20px;
+                border: none;
+                font-weight: bold;
+                font-size: 11px;
+                color: #cccccc;
+                background-color: #252526;
+            }
+            #FolderHeader:hover {
+                background-color: #2a2d2e;
+            }
+            #OpenFolderBtn {
+                background-color: #0e639c;
+                color: #ffffff;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 2px;
+                margin-top: 10px;
+            }
+            #OpenFolderBtn:hover {
+                background-color: #1177bb;
+            }
+            #TerminalHeader {
+                background-color: #252526;
+                border-top: 1px solid #454545;
+            }
+            #CloseTerminalBtn {
+                background-color: transparent;
+                color: #cccccc;
+                border: none;
+                font-size: 14px;
+            }
+            #CloseTerminalBtn:hover {
+                background-color: #505050;
+                border-radius: 2px;
             }
             QSplitter::handle {
-                background-color: #333333;
+                background-color: #252526;
             }
             #ActivityBar {
                 background-color: #333333;
@@ -218,6 +449,54 @@ class CodeEditor(QMainWindow):
             }
             #ExplorerBtn:hover {
                 background-color: #505050;
+            }
+            QScrollBar:horizontal {
+                background: #1e1e1e;
+                height: 14px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #424242;
+                min-width: 20px;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+            QScrollBar:vertical {
+                background: #1e1e1e;
+                width: 14px;
+            }
+            QScrollBar::handle:vertical {
+                background: #424242;
+                min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal,
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QTabWidget::pane {
+                border: 0;
+                background-color: #1e1e1e;
+            }
+            QTabBar {
+                qproperty-drawBase: 0;
+            }
+            QTabBar::tab {
+                background-color: #2d2d2d;
+                color: #858585;
+                padding: 8px 16px;
+                border: none;
+                border-right: 1px solid #252526;
+            }
+            QTabBar::tab:selected {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border-top: 2px solid #007acc;
+            }
+            QTabBar::tab:hover:!selected {
+                color: #cccccc;
             }
         """)
 
