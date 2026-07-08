@@ -2,10 +2,10 @@ import sys
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, 
                              QAction, QSplitter, QTreeView, QFileSystemModel, 
-                             QFileDialog, QMessageBox, QPushButton, QStackedWidget, QLabel, QTabWidget)
-from PyQt5.QtCore import Qt, QDir
+                             QFileDialog, QMessageBox, QPushButton, QStackedWidget, QLabel, QTabWidget, QTextEdit, QToolBar)
+from PyQt5.QtCore import Qt, QDir, QProcess
 from PyQt5.QtGui import QFontDatabase, QFont
-from editor import CppEditor
+from editor import CppEditor, EditorTabWidget, AnnotationPanel
 from terminal import TerminalWidget
 
 class CodeEditor(QMainWindow):
@@ -19,6 +19,28 @@ class CodeEditor(QMainWindow):
         self.apply_dark_theme()
 
     def setup_ui(self):
+        # Toolbar
+        self.toolbar = self.addToolBar("Main Toolbar")
+        self.toolbar.setMovable(False)
+        self.toolbar.setStyleSheet("background-color: #333333; border-bottom: 1px solid #252526;")
+        
+        self.annotate_btn = QPushButton("Annotate")
+        self.annotate_btn.setCursor(Qt.PointingHandCursor)
+        self.annotate_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0e639c; 
+                color: white; 
+                padding: 4px 12px; 
+                border: none;
+                border-radius: 2px;
+                margin: 4px;
+            }
+            QPushButton:hover {
+                background-color: #1177bb;
+            }
+        """)
+        self.toolbar.addWidget(self.annotate_btn)
+
         # Central widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -117,10 +139,20 @@ class CodeEditor(QMainWindow):
         self.explorer_container.hide()
         
         # Editor part (Tabs)
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        self.tabs.setTabsClosable(True)
-        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs = EditorTabWidget()
+        
+        # Annotation Panel (Right side box)
+        self.annotation_panel = AnnotationPanel(self.tabs)
+        
+        # Connect Annotate button now that annotation_panel is initialized
+        self.annotate_btn.clicked.connect(self.annotation_panel.run_annotation)
+        
+        # Editor Splitter (Horizontal for Tabs and Summary)
+        self.editor_splitter = QSplitter(Qt.Horizontal)
+        self.editor_splitter.setHandleWidth(1)
+        self.editor_splitter.addWidget(self.tabs)
+        self.editor_splitter.addWidget(self.annotation_panel)
+        self.editor_splitter.setSizes([600, 400])
         
         # Right Side Layout Splitter (Editor on top, Terminal on bottom)
         self.right_splitter = QSplitter(Qt.Vertical)
@@ -161,7 +193,7 @@ class CodeEditor(QMainWindow):
         term_layout.addWidget(self.terminal_header)
         term_layout.addWidget(self.terminal)
         
-        self.right_splitter.addWidget(self.tabs)
+        self.right_splitter.addWidget(self.editor_splitter)
         self.right_splitter.addWidget(self.terminal_container)
         self.right_splitter.setSizes([600, 168])
         self.terminal_container.hide()
@@ -185,7 +217,7 @@ class CodeEditor(QMainWindow):
         
         save_action = QAction("Save", self)
         save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self.save_file)
+        save_action.triggered.connect(lambda: self.tabs.save_file())
         
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Ctrl+Q")
@@ -239,58 +271,15 @@ class CodeEditor(QMainWindow):
     def on_tree_double_clicked(self, index):
         file_path = self.model.filePath(index)
         if not self.model.isDir(index):
-            # Check if file is already open
-            for i in range(self.tabs.count()):
-                editor = self.tabs.widget(i)
-                if hasattr(editor, 'file_path') and editor.file_path == file_path:
-                    self.tabs.setCurrentIndex(i)
-                    return
-                    
-            # Open new file
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                new_editor = CppEditor()
-                new_editor.setText(content)
-                new_editor.file_path = file_path
-                
-                file_name = os.path.basename(file_path)
-                tab_index = self.tabs.addTab(new_editor, file_name)
-                self.tabs.setCurrentIndex(tab_index)
-                self.tabs.setTabToolTip(tab_index, file_path)
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not open file:\n{str(e)}")
-
-    def close_tab(self, index):
-        widget = self.tabs.widget(index)
-        self.tabs.removeTab(index)
-        if widget:
-            widget.deleteLater()
-
-    def save_file(self):
-        current_tab_index = self.tabs.currentIndex()
-        if current_tab_index != -1:
-            editor = self.tabs.widget(current_tab_index)
-            if hasattr(editor, 'file_path'):
-                try:
-                    with open(editor.file_path, 'w', encoding='utf-8') as f:
-                        f.write(editor.text())
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Could not save file:\n{str(e)}")
-
-    def get_current_file_path(self):
-        current_tab_index = self.tabs.currentIndex()
-        if current_tab_index != -1:
-            editor = self.tabs.widget(current_tab_index)
-            if hasattr(editor, 'file_path'):
-                return editor.file_path
-        return None
+            self.tabs.open_file(file_path)
 
     def build_code(self):
-        file_path = self.get_current_file_path()
+        # Save before building
+        self.tabs.save_file()
+        
+        file_path = self.tabs.get_current_file_path()
         if not file_path:
-            QMessageBox.warning(self, "Warning", "No file is currently open to build.")
+            QMessageBox.warning(self, "Warning", "No file is currently open to annotate.")
             return
             
         file_dir = os.path.dirname(file_path)
@@ -311,7 +300,7 @@ class CodeEditor(QMainWindow):
         self.terminal.execute_command(cmd)
 
     def run_code(self):
-        file_path = self.get_current_file_path()
+        file_path = self.tabs.get_current_file_path()
         if not file_path:
             QMessageBox.warning(self, "Warning", "No file is currently open to run.")
             return
@@ -431,6 +420,23 @@ class CodeEditor(QMainWindow):
                 font-size: 14px;
             }
             #CloseTerminalBtn:hover {
+                background-color: #505050;
+                border-radius: 2px;
+            }
+            #SummaryContainer {
+                background-color: #252526;
+            }
+            #SummaryHeader {
+                background-color: #252526;
+                border-bottom: 1px solid #454545;
+            }
+            #CloseSummaryBtn {
+                background-color: transparent;
+                color: #cccccc;
+                border: none;
+                font-size: 14px;
+            }
+            #CloseSummaryBtn:hover {
                 background-color: #505050;
                 border-radius: 2px;
             }

@@ -10,3 +10,6 @@ venv/
 
 # fonts
 fonts/
+
+# cache
+*.txt
