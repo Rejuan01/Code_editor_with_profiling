@@ -51,7 +51,7 @@ class CppEditor(QsciScintilla):
         self.setLexer(self.lexer)
         
         # Margin 0: Percentages (Text Margin) - ON THE LEFT
-        self.setMarginType(0, QsciScintilla.TextMarginRightJustified)
+        self.setMarginType(0, QsciScintilla.TextMargin)
         self.setMarginWidth(0, 0) # Hidden by default until requested
         
         # Margin 1: Line numbers - ON THE RIGHT
@@ -68,13 +68,14 @@ class CppEditor(QsciScintilla):
         self.setFrameShape(QsciScintilla.NoFrame)
 
     def setup_margin_styles(self):
-        # 5 shades for percentages: 0-4%, 5-10%, 10-25%, 25-50%, 50-100%
+        # 6 shades for percentages: 0-2%, 2-6%, 6-10%, 10-15%, 15-20%, 20%+
         self.pct_colors = [
-            (4.999, QColor("#28a745")), # Green (0-4%)
-            (9.999, QColor("#85c83b")), # Lime (5-10%)
-            (24.999, QColor("#e5c07b")), # Yellow (10-25%)
-            (49.999, QColor("#d19a66")), # Orange (25-50%)
-            (float('inf'), QColor("#e06c75")) # Red (50-100%)
+            (2.0, QColor("#28a745")),     # Green (0-2%)
+            (6.0, QColor("#85c83b")),     # Lime (2-6%)
+            (10.0, QColor("#e5c07b")),    # Yellow (6-10%)
+            (15.0, QColor("#d19a66")),    # Orange (10-15%)
+            (20.0, QColor("#be5046")),    # Dark Orange/Red (15-20%)
+            (float('inf'), QColor("#e06c75")) # Red (20%+)
         ]
         
         for i, (_, color) in enumerate(self.pct_colors):
@@ -86,23 +87,18 @@ class CppEditor(QsciScintilla):
             # Explicitly set font to ensure visibility
             self.SendScintilla(QsciScintilla.SCI_STYLESETFONT, style, b"Fira Code")
             self.SendScintilla(QsciScintilla.SCI_STYLESETSIZE, style, 10)
+            
+        # Style for instruction count (Style 60)
+        self.inst_style = 60
+        self.SendScintilla(QsciScintilla.SCI_STYLESETFORE, self.inst_style, 0x858585)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETBACK, self.inst_style, 0x1e1e1e)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETFONT, self.inst_style, b"Fira Code")
+        self.SendScintilla(QsciScintilla.SCI_STYLESETSIZE, self.inst_style, 10)
 
-    def show_percentages(self, pct_dict):
-        # Set margin width to accommodate 100.00%
-        self.setMarginWidth(0, " 100.00% ")
-        self.clearMarginText()
-        
-        for ln, pct in pct_dict.items():
-            # Determine color style based on threshold
-            style = 50
-            for i, (threshold, _) in enumerate(self.pct_colors):
-                if pct <= threshold:
-                    style = 50 + i
-                    break
-            else:
-                style = 54
-                
-            self.setMarginText(ln - 1, f" {pct:.2f}% ", style)
+        # Remove annotations
+        self.setMarginWidth(0, 0)
+        for i in range(self.lines()):
+            self.SendScintilla(QsciScintilla.SCI_MARGINSETTEXT, i, b"")
 
 class EditorTabWidget(QTabWidget):
     def __init__(self, parent=None):
@@ -160,156 +156,164 @@ class EditorTabWidget(QTabWidget):
                 return editor.file_path
         return None
 
-class AnnotationPanel(QWidget):
+class MetricsPanel(QsciScintilla):
     def __init__(self, editor_tabs: EditorTabWidget, parent=None):
         super().__init__(parent)
         self.editor_tabs = editor_tabs
-        self.setup_ui()
-        self.annot_process = None
-
-    def setup_ui(self):
-        self.setObjectName("SummaryContainer")
-        summary_layout = QVBoxLayout(self)
-        summary_layout.setContentsMargins(0, 0, 0, 0)
-        summary_layout.setSpacing(0)
         
-        self.summary_header = QWidget()
-        self.summary_header.setObjectName("SummaryHeader")
-        self.summary_header.setFixedHeight(30)
-        sum_header_layout = QHBoxLayout(self.summary_header)
-        sum_header_layout.setContentsMargins(15, 0, 10, 0)
+        # Hide all margins
+        self.setMarginWidth(0, 0)
+        self.setMarginWidth(1, 0)
         
-        sum_title = QLabel("SUMMARY")
-        sum_title.setStyleSheet("color: #bbbbbb; font-size: 11px; font-weight: normal;")
+        self.setReadOnly(True)
+        self.setFrameShape(QsciScintilla.NoFrame)
+        self.setPaper(QColor("#1e1e1e"))
+        self.setColor(QColor("#858585"))
         
-        close_sum_btn = QPushButton("✕")
-        close_sum_btn.setObjectName("CloseSummaryBtn")
-        close_sum_btn.setFixedSize(20, 20)
-        close_sum_btn.setCursor(Qt.PointingHandCursor)
-        close_sum_btn.setToolTip("Close Summary")
-        close_sum_btn.clicked.connect(self.hide)
+        font = QFont("Fira Code", 10)
+        self.setFont(font)
         
-        sum_header_layout.addWidget(sum_title)
-        sum_header_layout.addStretch()
-        sum_header_layout.addWidget(close_sum_btn)
+        # Setup styles
+        self.pct_colors = [
+            (2.0, QColor("#28a745")),     # Green (0-2%)
+            (6.0, QColor("#85c83b")),     # Lime (2-6%)
+            (10.0, QColor("#e5c07b")),    # Yellow (6-10%)
+            (15.0, QColor("#d19a66")),    # Orange (10-15%)
+            (20.0, QColor("#be5046")),    # Dark Orange/Red (15-20%)
+            (float('inf'), QColor("#e06c75")) # Red (20%+)
+        ]
         
-        self.summary_text = QTextEdit()
-        self.summary_text.setReadOnly(True)
-        self.summary_text.setStyleSheet("background-color: #0d1117; color: #abb2bf; border: none; padding: 10px; font-family: 'Courier New';")
+        for i, (_, color) in enumerate(self.pct_colors):
+            style = 50 + i
+            bgr = (color.blue() << 16) | (color.green() << 8) | color.red()
+            self.SendScintilla(QsciScintilla.SCI_STYLESETFORE, style, bgr)
+            self.SendScintilla(QsciScintilla.SCI_STYLESETBACK, style, 0x1e1e1e)
+            self.SendScintilla(QsciScintilla.SCI_STYLESETFONT, style, b"Fira Code")
+            self.SendScintilla(QsciScintilla.SCI_STYLESETSIZE, style, 10)
+            
+        self.inst_style = 60
+        self.SendScintilla(QsciScintilla.SCI_STYLESETFORE, self.inst_style, 0x67A5E5) # Peach/Orange (BGR format)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETBACK, self.inst_style, 0x1e1e1e)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETFONT, self.inst_style, b"Fira Code")
+        self.SendScintilla(QsciScintilla.SCI_STYLESETSIZE, self.inst_style, 10)
         
-        summary_layout.addWidget(self.summary_header)
-        summary_layout.addWidget(self.summary_text)
+        self.header_style = 70
+        self.SendScintilla(QsciScintilla.SCI_STYLESETFORE, self.header_style, 0xD6C85E) # Cyan (BGR format)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETBACK, self.header_style, 0x1e1e1e)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETFONT, self.header_style, b"Fira Code")
+        self.SendScintilla(QsciScintilla.SCI_STYLESETSIZE, self.header_style, 10)
+        self.SendScintilla(QsciScintilla.SCI_STYLESETBOLD, self.header_style, True)
+        
+        # Disable vertical scrollbar, keep horizontal
+        self.SendScintilla(QsciScintilla.SCI_SETVSCROLLBAR, 0)
+        self.SendScintilla(QsciScintilla.SCI_SETHSCROLLBAR, 1)
+        
+        self.editor_tabs.currentChanged.connect(self.on_tab_changed)
+        self.current_data = None
         self.hide()
-
-    def format_summary_text(self, text):
-        html = "<div style='font-family: \"Fira Code\", \"Courier New\", monospace; font-size: 13px; line-height: 1.5; color: #abb2bf; padding: 5px;'>"
-        color_key = "#61afef"    
-        color_num = "#d19a66"    
-        color_pct = "#e06c75"    
-        color_paren = "#5c6370"  
         
-        for line in text.splitlines():
-            if not line.strip():
-                html += "<br>"
+    def on_tab_changed(self, index):
+        if hasattr(self, 'current_editor') and self.current_editor:
+            try:
+                self.current_editor.verticalScrollBar().valueChanged.disconnect(self.sync_scroll)
+            except TypeError:
+                pass
+                
+        if index == -1:
+            self.hide()
+            return
+            
+        editor = self.editor_tabs.widget(index)
+        self.current_editor = editor
+        
+        editor.verticalScrollBar().valueChanged.connect(self.sync_scroll)
+        self.sync_scroll(editor.verticalScrollBar().value())
+        
+        # If we have data for this file, show it
+        if hasattr(editor, 'metrics_data') and editor.metrics_data:
+            self.update_annotations(editor.metrics_data, editor.lines())
+            self.show()
+        else:
+            self.hide()
+            
+    def sync_scroll(self, value):
+        self.verticalScrollBar().setValue(value)
+        
+    def update_annotations(self, data, total_lines):
+        all_metrics = set()
+        for item in data:
+            for k in item.keys():
+                if k not in ("line", "percentage"):
+                    all_metrics.add(k)
+        
+        preferred_order = ["raw_instructions", "branches_executed", "branch_misses", "l1_cache_misses", "llc_cache_misses", "Dr", "Dw", "D1mw", "DLmw", "I1mr", "ILmr"]
+        sorted_keys = [k for k in preferred_order if k in all_metrics]
+        sorted_keys += sorted(list(all_metrics - set(preferred_order)))
+        
+        col_widths = {}
+        for k in sorted_keys:
+            max_val = 0
+            for item in data:
+                v = item.get(k, 0)
+                if isinstance(v, (int, float)) and v > max_val:
+                    max_val = v
+            col_widths[k] = max(len(k), len(f"{max_val:,}"))
+            
+        header1 = f" {'%':>6} "
+        for k in sorted_keys:
+            header1 += f"  {k:>{col_widths[k]}}"
+            
+        # We offset the data by 2 lines so it visually aligns with the code editor 
+        # (which is pushed down by the tab bar)
+        lines_text = [""] * (total_lines + 2)
+        lines_text[0] = ""
+        lines_text[1] = header1
+        
+        line_styles = {}
+        line_styles[1] = (self.header_style, len(header1), 0, 0)
+            
+        for item in data:
+            ln = item.get("line")
+            if not ln or ln < 1 or ln > total_lines:
                 continue
                 
-            if ':' in line:
-                key, rest = line.split(':', 1)
-                formatted_line = f"<span style='color: {color_key}; font-weight: bold;'>{key}:</span>"
-                paren_split = rest.split('(', 1)
-                val_part = paren_split[0]
-                paren_part = f"({paren_split[1]}" if len(paren_split) > 1 else ""
-                
-                def colorize_numbers(s):
-                    chunks = s.split('&nbsp;')
-                    for i, chunk in enumerate(chunks):
-                        if not any(c.isdigit() for c in chunk):
-                            continue
-                        m = re.match(r'^(\(?)?([\d,.]+)(%?)(\)?\s*\w*)?$', chunk)
-                        if m:
-                            pre, num, pct, post = m.groups()
-                            color = color_pct if pct else color_num
-                            chunks[i] = f"{pre or ''}<span style='color: {color};'>{num}{pct}</span>{post or ''}"
-                    return '&nbsp;'.join(chunks)
-                
-                val_part = val_part.replace(' ', '&nbsp;')
-                val_part = colorize_numbers(val_part)
-                
-                if paren_part:
-                    paren_part = paren_part.replace(' ', '&nbsp;')
-                    paren_part = colorize_numbers(paren_part)
-                    formatted_line += f"{val_part}<span style='color: {color_paren};'>{paren_part}</span>"
-                else:
-                    formatted_line += val_part
-                    
-                html += f"<div>{formatted_line}</div>\n"
+            pct = item.get("percentage", 0.0)
+            
+            style = 50
+            for i, (threshold, _) in enumerate(self.pct_colors):
+                if pct <= threshold:
+                    style = 50 + i
+                    break
             else:
-                html += f"<div>{line.replace(' ', '&nbsp;')}</div>\n"
+                style = 50 + len(self.pct_colors) - 1
                 
-        html += "</div>"
-        return html
-
-    def run_annotation(self):
-        file_path = self.editor_tabs.get_current_file_path()
-        if not file_path:
-            QMessageBox.warning(self, "Warning", "No file is currently open.")
-            return
-
-        self.summary_text.setHtml("<div style='color: #abb2bf; padding: 10px;'>Running annotation scripts, please wait...</div>")
-        self.show()
-        
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        if self.annot_process is not None:
-            self.annot_process.kill()
+            pct_text = f" {pct:5.2f}%"
             
-        self.annot_process = QProcess(self)
-        self.annot_process.setWorkingDirectory(os.path.join(project_root, "src"))
-        
-        command = f'python3 annotate/main_script.py "{file_path}" && python3 annotate/reconstruction.py'
-        self.annot_process.start("bash", ["-c", command])
-        
-        self.annot_process.finished.connect(self.on_annotation_finished)
-
-    def on_annotation_finished(self, exitCode, exitStatus):
-        if exitCode != 0:
-            err = self.annot_process.readAllStandardError().data().decode()
-            if err:
-                QMessageBox.critical(self, "Error", f"Annotation script failed:\n{err}")
-
-        # Parse standard output for percentages
-        output = self.annot_process.readAllStandardOutput().data().decode()
-        pct_dict = {}
-        for line in output.splitlines():
-            line = line.strip()
-            if " -> " in line and line.endswith("%"):
-                try:
-                    parts = line.split(" -> ")
-                    ln = int(parts[0])
-                    pct = float(parts[1].rstrip("%"))
-                    pct_dict[ln] = pct
-                except ValueError:
-                    pass
-                    
-        # Apply percentages to the active editor
-        current_tab_index = self.editor_tabs.currentIndex()
-        if current_tab_index != -1:
-            editor = self.editor_tabs.widget(current_tab_index)
-            if hasattr(editor, 'show_percentages'):
-                editor.show_percentages(pct_dict)
-
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        summary_path = os.path.join(project_root, "src", "annotate", "summary.txt")
-        
-        if os.path.exists(summary_path):
-            try:
-                with open(summary_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                html_content = self.format_summary_text(content)
-                self.summary_text.setHtml(html_content)
-            except Exception as e:
-                self.summary_text.setText(f"Error reading summary.txt:\n{str(e)}")
-        else:
-            self.summary_text.setText("summary.txt not found.")
+            metrics_text = ""
+            for k in sorted_keys:
+                val = item.get(k, 0)
+                w = col_widths[k]
+                val_str = f"{val:,}" if isinstance(val, int) else str(val)
+                metrics_text += f"  {val_str:>{w}}"
             
-        self.show()
+            # Assign to line index (ln - 1 + 2 offset = ln + 1)
+            lines_text[ln + 1] = pct_text + metrics_text
+            line_styles[ln + 1] = (style, len(pct_text), self.inst_style, len(metrics_text))
+            
+        self.setReadOnly(False)
+        self.setText("\n".join(lines_text))
+        self.setReadOnly(True)
+        
+        # Apply styles per line
+        for i in range(total_lines + 2):
+            if i in line_styles:
+                pos = self.SendScintilla(QsciScintilla.SCI_POSITIONFROMLINE, i)
+                s1, l1, s2, l2 = line_styles[i]
+                
+                self.SendScintilla(QsciScintilla.SCI_STARTSTYLING, pos, 0xFF)
+                self.SendScintilla(QsciScintilla.SCI_SETSTYLING, l1, s1)
+                if l2 > 0:
+                    self.SendScintilla(QsciScintilla.SCI_SETSTYLING, l2, s2)
+
+
+

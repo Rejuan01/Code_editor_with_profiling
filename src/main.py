@@ -1,11 +1,12 @@
 import sys
 import os
+import json
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, 
                              QAction, QSplitter, QTreeView, QFileSystemModel, 
                              QFileDialog, QMessageBox, QPushButton, QStackedWidget, QLabel, QTabWidget, QTextEdit, QToolBar)
-from PyQt5.QtCore import Qt, QDir, QProcess
-from PyQt5.QtGui import QFontDatabase, QFont
-from editor import CppEditor, EditorTabWidget, AnnotationPanel
+from PyQt5.QtCore import Qt, QDir, QProcess, QSize
+from PyQt5.QtGui import QFontDatabase, QFont, QIcon
+from editor import CppEditor, EditorTabWidget, MetricsPanel
 from terminal import TerminalWidget
 
 class CodeEditor(QMainWindow):
@@ -13,6 +14,7 @@ class CodeEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("Minimal Code Editor")
         self.resize(1024, 768)
+        self.annot_process = None
         
         self.setup_ui()
         self.setup_menu()
@@ -57,7 +59,10 @@ class CodeEditor(QMainWindow):
         activity_layout.setAlignment(Qt.AlignTop)
         
         # Explorer toggle button
-        self.explorer_btn = QPushButton("📁") # Using emoji for icon
+        self.explorer_btn = QPushButton("")
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'asset', 'explorer.png')
+        self.explorer_btn.setIcon(QIcon(icon_path))
+        self.explorer_btn.setIconSize(QSize(28, 28))
         self.explorer_btn.setObjectName("ExplorerBtn")
         self.explorer_btn.setFixedSize(40, 40)
         self.explorer_btn.setToolTip("Explorer")
@@ -141,18 +146,17 @@ class CodeEditor(QMainWindow):
         # Editor part (Tabs)
         self.tabs = EditorTabWidget()
         
-        # Annotation Panel (Right side box)
-        self.annotation_panel = AnnotationPanel(self.tabs)
+        # Metrics panel (Left of code editor)
+        self.metrics_panel = MetricsPanel(self.tabs)
         
-        # Connect Annotate button now that annotation_panel is initialized
-        self.annotate_btn.clicked.connect(self.annotation_panel.run_annotation)
-        
-        # Editor Splitter (Horizontal for Tabs and Summary)
         self.editor_splitter = QSplitter(Qt.Horizontal)
         self.editor_splitter.setHandleWidth(1)
+        self.editor_splitter.addWidget(self.metrics_panel)
         self.editor_splitter.addWidget(self.tabs)
-        self.editor_splitter.addWidget(self.annotation_panel)
-        self.editor_splitter.setSizes([600, 400])
+        self.editor_splitter.setSizes([300, 700])
+        
+        # Connect Annotate button
+        self.annotate_btn.clicked.connect(self.run_annotation)
         
         # Right Side Layout Splitter (Editor on top, Terminal on bottom)
         self.right_splitter = QSplitter(Qt.Vertical)
@@ -330,6 +334,53 @@ class CodeEditor(QMainWindow):
             self.terminal.setFocus()
         else:
             self.terminal_container.hide()
+
+    def run_annotation(self):
+        file_path = self.tabs.get_current_file_path()
+        if not file_path:
+            QMessageBox.warning(self, "Warning", "No file is currently open.")
+            return
+
+        self.statusBar().showMessage("Running annotation scripts, please wait...")
+        
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        if self.annot_process is not None:
+            self.annot_process.kill()
+            
+        self.annot_process = QProcess(self)
+        self.annot_process.setWorkingDirectory(os.path.join(project_root, "src"))
+        
+        file_basename = os.path.basename(file_path)
+        command = f'python3 annotate/run_script.py "{file_path}" && python3 annotate/backend.py "annotation.txt" "{file_basename}"'
+        self.annot_process.start("bash", ["-c", command])
+        
+        self.annot_process.finished.connect(self.on_annotation_finished)
+
+    def on_annotation_finished(self, exitCode, exitStatus):
+        self.statusBar().clearMessage()
+        if exitCode != 0:
+            err = self.annot_process.readAllStandardError().data().decode()
+            if err:
+                QMessageBox.critical(self, "Error", f"Annotation script failed:\n{err}")
+
+        output = self.annot_process.readAllStandardOutput().data().decode()
+        
+        if "=== FINAL PARSED JSON OUTPUT ===" in output:
+            try:
+                json_str = output.split("=== FINAL PARSED JSON OUTPUT ===")[1].strip()
+                data = json.loads(json_str)
+                
+                current_tab_index = self.tabs.currentIndex()
+                if current_tab_index != -1:
+                    editor = self.tabs.widget(current_tab_index)
+                    editor.metrics_data = data
+                    self.metrics_panel.on_tab_changed(current_tab_index)
+                        
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Error parsing JSON output:\n{str(e)}")
+        else:
+            QMessageBox.warning(self, "Warning", "Did not receive expected JSON from backend.")
 
     def apply_dark_theme(self):
         # App-wide dark theme stylesheet (VS Code inspired)

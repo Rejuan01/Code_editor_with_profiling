@@ -13,3 +13,6 @@ fonts/
 
 # cache
 *.txt
+
+#asset
+asset/
